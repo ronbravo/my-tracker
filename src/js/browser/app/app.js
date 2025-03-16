@@ -24,12 +24,12 @@ async function createItem (details = {}) {
         kind: ITEM_KIND,
         composite: [ITEM_KIND],
       },
-      total: 1,
+      total: 0, //1,
       value,
     },
     storage: {
       0: '(nothing)',
-      1: '(self)',
+      // 1: '(self)',
     },
   }
   
@@ -46,8 +46,13 @@ async function createItem (details = {}) {
 }
 
 async function dataToItems (details = {}) {
-  let { data, index = 0, tags, target } = details;
+  let { data, index = 0, tagAsIndex, tags, target } = details;
   let item, kind, tag, value;
+  
+  // NOTE: As of ES2015 object keys follow a specified
+  // iterration order.
+  // ref: https://stackoverflow.com/a/38218582
+  // TODO: Create an object in JS that mimics behavior for host systems different than JS
   
   if (tags === undefined) {
     tags = Object.keys (data);
@@ -56,38 +61,101 @@ async function dataToItems (details = {}) {
   
   tag = tags [index];
   if (tag) {
-    value = data [tag];
+    details.index = index + 1;
     
-    if (value) {
-      kind = value.constructor.name;
-      if (kind === 'String') {
-        item = await createItem ({ kind: TEXT_ITEM_KIND, value });
-        await tagItemLink ({
-          target,
-          to: { item },
-        });
+    if (index < tags.length) {
+      value = data [tag];
+
+      if (value) {
+        kind = value.constructor.name;
+        if (kind === 'String') {
+          item = await createItem ({ kind: TEXT_ITEM_KIND, value });          
+          await addItemLink ({
+            tagAsIndex,
+            target,
+            to: {
+              [tag]: item,
+            },
+          });
+        }
+        else if (kind === 'Number') {
+          item = await createItem ({ kind: NUMBER_ITEM_KIND, value });
+          await addItemLink ({
+            tagAsIndex,
+            target,
+            to: { 
+              [tag]: item,
+            },
+          });
+        }
+        else if (kind === 'Object') {
+        }
+        else if (kind === 'Array') {
+          item = await createItem ({ kind: LIST_ITEM_KIND });
+          await dataToItems ({ data: value, target: item, tagAsIndex: true });
+          
+          await addItemLink ({
+            tagAsIndex,
+            target,
+            to: { 
+              [tag]: item,
+            },
+          });
+        }
       }
-    }
-    else {
+      else {
+      }
+      
+      await dataToItems (details);
     }
   }
+}
+
+async function generateId (detail = {}) {
+  let gid;
+  gid = [
+    'gid', Date.now (), ('' + randomNumber (0, 9999)).padStart (4, '0')
+  ].join ('-');
+  return gid;
+}
+
+function randomNumber (min, max) {
+  // min and max included
+  // https://stackoverflow.com/a/7228322
+  return Math.floor(Math.random() * (max - min + 1) + min);
 }
 
 // ------------------------------------------------
 // Environment
 
 let root;
+
+async function createEnvironment (details = {}) {
+  let { data = {} } = details;
+  let item;
+  item = await createItem ({
+    data: Object.assign ({
+      name: 'no name environment',
+      children: ['ron'],
+    }, data),
+    kind: ENVIRONMENT_ITEM_KIND,
+  });
+  return item;
+}
+
 async function getEnvironment (details = {}) {
   let { name = 'main' } = details;
   let area;
   
   if (!root) {
-    root = await createItem ({
-      data: { name: 'root environment' },
-      kind: ENVIRONMENT_ITEM_KIND,
-    });
+    root = await createEnvironment ({ data: { name: 'root environment' } });
     console.log ('ROOT:', JSON.stringify (root, null, 2));
   }
+  
+  area = await getPathData ({
+    path: 'children/' + name,
+    target: root,
+  });
 
 //  console.warn ('TODO: get area by name');
 //  area = shared.area [name];
@@ -101,52 +169,74 @@ async function getEnvironment (details = {}) {
 // ------------------------------------------------
 // Link Items
 
-async function tagItemLink (details) {
-  let { from, target, to } = details;
+async function addItemLink (details = {}) {
+  let { from, tagAsIndex, target, to } = details;
   let area, id, item, list, tag, total;
-  
+
   if (target) {
     total = target.info.total;
-    total = total + 1;
-    id = total;
-   
+    
     if (from) { 
       list = from; 
-      area = 'to';
+      area = 'from';
     }
     else if (to) { 
       list = to;
       area = 'to';
     }
     
-    for (tag in list) {      
-      await setDataPathList ({
-        target,
-        path: [
-          `link/${area}/tagged/${tag}/id:`, id,
-        ],
-      });
+    for (tag in list) {
+      total = total + 1;
+      id = total;
       
-      await setDataPathList ({
+      // add item to storage
+      await setExplicitPathListData ({
         target,
         path: [
           `storage/${id}:`, list [tag],
         ],
       });
+      
+      // create link to storage
+      if (tagAsIndex) {
+        tag = '' + total;
+      }
+      
+      await setExplicitPathListData ({
+        target,
+        path: [
+          `link/${area}/${tag}/id:`, id,
+        ],
+      });
+      
+      target.info.total = total;
     }
   }
 }
 
-async function addItemLink () {}
-async function removeItemLink () {}
+async function removeItemLink (details = {}) {}
 
 // -------------------------------------------------------
 // Data Path
 
-async function setData () {}
-async function setDataList () {}
+//setPathData
+//
+//setExplicitPathData
+//await setDataExplict ({ path });
 
-async function setDataPath (details = {}) {
+async function getPathData (details = {}) {}
+
+async function getPathListData (details = {}) {}
+
+async function getExplicitPathData (details = {}) {}
+
+async function getExplicitPathListData (details = {}) {}
+
+async function setPathData (details = {}) {}
+
+async function setPathListData (details = {}) {}
+
+async function setExplicitPathData (details = {}) {
   let { path, index = 0, target, total, value = null } = details;
   let item, tag;
   
@@ -176,13 +266,13 @@ async function setDataPath (details = {}) {
 
         // console.log ('TAG:', tag, value);
         details.target = item;        
-        await setDataPath (details);
+        await setExplicitPathData (details);
       }
     }
   }
 }
 
-async function setDataPathList (details = {}) {
+async function setExplicitPathListData (details = {}) {
   let { path, index = 0, target } = details;
   let route, value;
   
@@ -199,7 +289,7 @@ async function setDataPathList (details = {}) {
     route = route.substring (0, (route.length - 1));
     route = route.split ('/');
 
-    await setDataPath ({
+    await setExplicitPathData ({
       path: route,
       target,
       value,
@@ -208,83 +298,6 @@ async function setDataPathList (details = {}) {
     // console.log ('ROUTE:', value, route);
   }
 }
-
-//async function createLink (details) {
-//  let { link, target } = details;
-//  let id, item, tag, total;
-//  
-//  if (target) {
-//    total = target.info.total;
-//    total = total + 1;
-//    id = total;
-//   
-//    for (tag in link.to.tagged) {
-//      await setRealItemPathData ({
-//        target,
-//        path: [
-//          `link/to/tagged/${tag}/${id}:`, id,
-//        ],
-//      });
-//    }
-//  }  
-//}
-
-//        await createLink ({
-//          target,
-//          link: {
-//            to: {
-//              tagged: {
-//                item,
-//              },
-//            },
-//          },
-//        });
-        // console.log ('ITEM:', tag, value, JSON.stringify (item, null, 2));
-
-// if (!target.link) { target.link = {} }
-    // if (!target.link.from) { target.link.from = {} }
-    
-//    if (!target.link) { target.link = {} }
-//    if (!target.link.to) { target.link.to = {} }
-//    // if (!target.link.to.ordered) { target.link.to.ordered = {} }
-//    if (!target.link.to.tagged) { target.link.to.tagged = {} }
-    
-    
-  
-//      item = link.to.tagged [tag];
-//      target.link.to.tagged [tag] = { id },
-//      target.storage [id] = item;
-//    }
-//  }
-  
-  //    link: {
-  //      from: {
-  //        ordered: {},
-  //        tagged: {},
-  //      },
-  //      to: {
-  //        ordered: {},
-  //        tagged: {},
-  //      },
-  //    },
-
-//shared.enviornment = await createItem ();
-//  environment: {},
-//  
-//  // OLD...
-//  area: {},
-//  actions: {},
-//  storage: {},
-//}
-
-//const shared = {
-//  environment: {},
-//  
-//  // OLD...
-//  area: {},
-//  actions: {},
-//  storage: {},
-//}
 
 // ------------------------------------------------
 // App
@@ -346,27 +359,6 @@ async function onData (details = {}) {
   main = await getEnvironment ();
 }
 
-async function createEnvironment (details = {}) {
-  let { name = 'no name' } = details;
-  let area;
-  
-  area = createItem ({ 
-    data: { name },
-  });
-  
-//  area = {
-//    name,
-//    action: {},
-//    storage: {
-//      0: '(nothing)',
-//      1: '(self)',
-//      2: {},
-//    },
-//  }
-  
-  return area;
-}
-
 globalThis.onData = onData;
 
 // Action
@@ -410,30 +402,11 @@ async function action (details = {}) {
   }
 }
 
-async function nextPathSection (details = {}) {
-  let { current, ensure, index = 0, list } = details;
-  let item, tag;
-
-  tag = list [index];
-  item = current [tag];
- 
-  if (!item && ensure && index < (list.length - 1)) {
-    item = await createItem ();
-    
-    current [tag] = item;
-    ensure.push (tag);
-    console.log ('creating:', index, tag);
-  }
-  
-  if (item) {
-    details.index = index + 1;
-    details.current = item;
-    await nextPathSection (details);
-  }
-}
-
 globalThis.action = action;
 globalThis.afterAction = afterAction;
+
+
+
 
 // ------------------------------------------------
 // BRAINSTORM
@@ -458,6 +431,49 @@ globalThis.afterAction = afterAction;
 
 // ------------------------------------------------
 // OLD CODE
+
+//async function nextPathSection (details = {}) {
+//  let { current, ensure, index = 0, list } = details;
+//  let item, tag;
+//
+//  tag = list [index];
+//  item = current [tag];
+// 
+//  if (!item && ensure && index < (list.length - 1)) {
+//    item = await createItem ();
+//    
+//    current [tag] = item;
+//    ensure.push (tag);
+//    console.log ('creating:', index, tag);
+//  }
+//  
+//  if (item) {
+//    details.index = index + 1;
+//    details.current = item;
+//    await nextPathSection (details);
+//  }
+//}
+
+//async function createEnvironment (details = {}) {
+//  let { name = 'no name' } = details;
+//  let area;
+//  
+//  area = createItem ({ 
+//    data: { name },
+//  });
+//  
+////  area = {
+////    name,
+////    action: {},
+////    storage: {
+////      0: '(nothing)',
+////      1: '(self)',
+////      2: {},
+////    },
+////  }
+//  
+//  return area;
+//}
 
   //  setData ({ path: 'app/my-tracker', data: {
 //    name: 'My Tracker',
@@ -560,3 +576,83 @@ globalThis.afterAction = afterAction;
 //    await runNextHandler (details);
 //  }
 //}
+
+
+
+//async function createLink (details) {
+//  let { link, target } = details;
+//  let id, item, tag, total;
+//  
+//  if (target) {
+//    total = target.info.total;
+//    total = total + 1;
+//    id = total;
+//   
+//    for (tag in link.to.tagged) {
+//      await setRealItemPathData ({
+//        target,
+//        path: [
+//          `link/to/tagged/${tag}/${id}:`, id,
+//        ],
+//      });
+//    }
+//  }  
+//}
+
+//        await createLink ({
+//          target,
+//          link: {
+//            to: {
+//              tagged: {
+//                item,
+//              },
+//            },
+//          },
+//        });
+        // console.log ('ITEM:', tag, value, JSON.stringify (item, null, 2));
+
+// if (!target.link) { target.link = {} }
+    // if (!target.link.from) { target.link.from = {} }
+    
+//    if (!target.link) { target.link = {} }
+//    if (!target.link.to) { target.link.to = {} }
+//    // if (!target.link.to.ordered) { target.link.to.ordered = {} }
+//    if (!target.link.to.tagged) { target.link.to.tagged = {} }
+    
+    
+  
+//      item = link.to.tagged [tag];
+//      target.link.to.tagged [tag] = { id },
+//      target.storage [id] = item;
+//    }
+//  }
+  
+  //    link: {
+  //      from: {
+  //        ordered: {},
+  //        tagged: {},
+  //      },
+  //      to: {
+  //        ordered: {},
+  //        tagged: {},
+  //      },
+  //    },
+
+//shared.enviornment = await createItem ();
+//  environment: {},
+//  
+//  // OLD...
+//  area: {},
+//  actions: {},
+//  storage: {},
+//}
+
+//const shared = {
+//  environment: {},
+//  
+//  // OLD...
+//  area: {},
+//  actions: {},
+//  storage: {},
+//}
+
